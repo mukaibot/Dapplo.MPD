@@ -11,11 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Dapplo.Log.Facade" Version="0.5.4" />
-    <PackageReference Include="Rx-Core" Version="2.2.5" />
-    <PackageReference Include="Rx-Interfaces" Version="2.2.5" />
-    <PackageReference Include="Rx-Linq" Version="2.2.5" />
-    <PackageReference Include="Rx-Main" Version="2.2.5" />
-    <PackageReference Include="Rx-PlatformServices" Version="2.2.5" />
     <PackageReference Include="Zeroconf" Version="3.4.2"/>
   </ItemGroup>
 </Project>
