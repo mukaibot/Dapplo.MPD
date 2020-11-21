@@ -21,9 +21,10 @@
 
 #region using
 
+using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Dapplo.Log.Facade;
+using Dapplo.Log;
 using Dapplo.Log.XUnit;
 using Dapplo.MPD.Client;
 using Xunit;
@@ -33,75 +34,86 @@ using Xunit.Abstractions;
 
 namespace Dapplo.MPD.Tests
 {
-	public class MpdTest
-	{
-		private static readonly LogSource Log = new LogSource();
-		private static int _port;
-		private static string _host;
+    public class MpdTest : IAsyncLifetime
+    {
+        private static int _port;
+        private static string _host;
 
-		public MpdTest(ITestOutputHelper testOutputHelper)
-		{
-			LogSettings.RegisterDefaultLogger<XUnitLogger>(LogLevels.Verbose, testOutputHelper);
-			Task.Run(async () =>
-			{
-				var mpdInstances = (await MpdSocketClient.FindByZeroConfAsync()).ToList();
-				foreach (var mpdInstance in mpdInstances)
-				{
-					Log.Debug().WriteLine("Found {0} at {1}", mpdInstance.Key, mpdInstance.Value.AbsoluteUri);
-				}
+        public MpdTest(ITestOutputHelper testOutputHelper)
+        {
+            LogSettings.RegisterDefaultLogger<XUnitLogger>(LogLevels.Verbose, testOutputHelper);
+        }
 
-				_port = mpdInstances.First().Value.Port;
-				_host = mpdInstances.First().Value.Host;
-			}).Wait();
-		}
+        public async Task InitializeAsync()
+        {
+            await Task.Run(async () =>
+            {
+                var mpdInstances = (await MpdSocketClient.FindByZeroConfAsync()).ToList();
+                if (mpdInstances.Any())
+                {
+                    _port = mpdInstances.First().Value.Port;
+                    _host = mpdInstances.First().Value.Host;
+                }
+                else
+                {
+                    var portFromEnv = Environment.GetEnvironmentVariable("MPD_PORT");
+                    var hostFromEnv = Environment.GetEnvironmentVariable("MPD_HOST") ?? throw new ArgumentException(
+                        "Configuration not found by ZeroConf and MPD_HOST not set in Environment");
+                    _port = portFromEnv == null ? 6600 : int.Parse(portFromEnv);
+                    _host = hostFromEnv;
+                }
+            });
+        }
 
-		[Fact]
-		public async Task TestConnectAsync()
-		{
-			using (var client = await MpdSocketClient.CreateAsync(_host, _port))
-			{
-				var status = await client.SendCommandAsync("status");
-				Assert.True(status.IsOk);
+        public Task DisposeAsync()
+        {
+            return Task.CompletedTask;
+        }
 
-				// Send unknown command
-				status = await client.SendCommandAsync("dapplo");
-				Assert.False(status.IsOk);
-			}
-		}
+        [Fact]
+        public async Task TestConnectAsync()
+        {
+            using (var client = await MpdSocketClient.CreateAsync(_host, _port))
+            {
+                var status = await client.SendCommandAsync("status");
+                Assert.True(status.IsOk);
 
-		[Fact]
-		public async Task TestIdleAsync()
-		{
-			var taskCompletionSource = new TaskCompletionSource<bool>();
+                // Send unknown command
+                status = await client.SendCommandAsync("dapplo");
+                Assert.False(status.IsOk);
+            }
+        }
 
-			using (var statusClient = await MpdStateMonitor.CreateAsync(_host, _port))
-			{
-				statusClient.StateChanged += (sender, args) =>
-				{
-					Log.Info().WriteLine("Subsystem changed {0}", args.ChangedSubsystem);
-					taskCompletionSource.SetResult(true);
-				};
-				using (var controlClient = await MpdClient.CreateAsync(_host, _port))
-				{
-					var status = await controlClient.StatusAsync();
-					await controlClient.PauseAsync(status.PlayState == PlayStates.Playing);
-					status = await controlClient.StatusAsync();
-					await controlClient.PauseAsync(status.PlayState == PlayStates.Playing);
-				}
-				// Using the delay with the token causes a TaskCanceledException
-				await taskCompletionSource.Task;
-			}
-		}
+        [Fact]
+        public async Task TestIdleAsync()
+        {
+            var taskCompletionSource = new TaskCompletionSource<bool>();
 
-		[Fact]
-		public async Task TestStatusAsync()
-		{
-			using (var client = await MpdClient.CreateAsync(_host, _port))
-			{
-				var status = await client.StatusAsync();
-				Assert.NotNull(status.Audioformat);
-				Assert.Equal("44100:16:2", status.Audioformat);
-			}
-		}
-	}
+            using (var statusClient = await MpdStateMonitor.CreateAsync(_host, _port))
+            {
+                statusClient.StateChanged += (sender, args) => { taskCompletionSource.SetResult(true); };
+                using (var controlClient = await MpdClient.CreateAsync(_host, _port))
+                {
+                    var status = await controlClient.StatusAsync();
+                    await controlClient.PauseAsync(status.PlayState == PlayStates.Playing);
+                    status = await controlClient.StatusAsync();
+                    await controlClient.PauseAsync(status.PlayState == PlayStates.Playing);
+                }
+
+                // Using the delay with the token causes a TaskCanceledException
+                await taskCompletionSource.Task;
+            }
+        }
+
+        [Fact]
+        public async Task TestStatusAsync()
+        {
+            using (var client = await MpdClient.CreateAsync(_host, _port))
+            {
+                var status = await client.StatusAsync();
+                Assert.NotNull(status.Audioformat);
+                Assert.Equal("44100:24:2", status.Audioformat);
+            }
+        }
+    }
 }
